@@ -115,6 +115,14 @@ public:
 protected:
 	void initializeExample() override
 	{
+		class ContributeToAO
+		{
+		public:
+			bool operator()(MaterialDensityPair44 voxeltype)
+			{
+				return voxeltype.getMaterial() > 0;
+			}
+		};
 		PerlinNoisePager* pager = new PerlinNoisePager();
 		PagedVolume<MaterialDensityPair44> volData(pager, 8 * 1024 * 1024, 64);
 
@@ -130,7 +138,7 @@ protected:
 
 		// Extract the surface
 		PolyVox::Region reg2(Vector3DInt32(0, 0, 0), Vector3DInt32(254, 254, 254));
-		auto mesh = extractCubicMesh(&volData, reg2);
+		auto mesh = extractCubicMesh(&volData, reg2, DefaultIsQuadNeeded<MaterialDensityPair44>(), ContributeToAO());
 		std::cout << "#vertices: " << mesh.getNoOfVertices() << std::endl;
 
 		auto decodedMesh = decodeMesh(mesh);

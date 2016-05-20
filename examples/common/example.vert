@@ -1,6 +1,8 @@
 #version 140
 
 in vec4 position; // This will be the position of the vertex in model-space
+in int ao;
+in vec4 normal; // This will be the position of the vertex in model-space
 
 // The usual matrices are provided
 uniform mat4 projectionMatrix;

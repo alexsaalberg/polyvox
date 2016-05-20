@@ -1,6 +1,7 @@
 #version 140
 
 in uvec4 position; // This will be the position of the vertex in model-space
+in int ao;
 in uint normal;
 
 // The usual matrices are provided

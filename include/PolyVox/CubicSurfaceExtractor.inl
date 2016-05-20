@@ -70,6 +70,7 @@ namespace PolyVox
 	{
 		int32_t iIndex;
 		typename VolumeType::VoxelType uMaterial;
+		uint8_t ambientOcclusion;
 	};
 
 	////////////////////////////////////////////////////////////////////////////////
@@ -90,6 +91,7 @@ namespace PolyVox
 		result.position = decodePosition(cubicVertex.encodedPosition);
 		result.normal.setElements(0.0f, 0.0f, 0.0f); // Currently not calculated
 		result.data = cubicVertex.data; // Data is not encoded
+		result.ambientOcclusion = cubicVertex.ambientOcclusion;
 		return result;
 	}
 
@@ -97,13 +99,24 @@ namespace PolyVox
 	// Surface extraction
 	////////////////////////////////////////////////////////////////////////////////
 
+	template<typename VertexType>
+	bool isSameVertex(const VertexType& v1, const VertexType& v2)
+	{
+		return v1.data == v2.data && v1.ambientOcclusion == v2.ambientOcclusion;
+	}
+
 	template<typename MeshType>
 	bool mergeQuads(Quad& q1, Quad& q2, MeshType* m_meshCurrent)
 	{
-		//All four vertices of a given quad have the same data,
-		//so just check that the first pair of vertices match.
-		if (m_meshCurrent->getVertex(q1.vertices[0]).data == m_meshCurrent->getVertex(q2.vertices[0]).data)
-		{
+		const typename MeshType::VertexType& v11 = m_meshCurrent->getVertex(q1.vertices[0]);
+		const typename MeshType::VertexType& v21 = m_meshCurrent->getVertex(q2.vertices[0]);
+		const typename MeshType::VertexType& v12 = m_meshCurrent->getVertex(q1.vertices[1]);
+		const typename MeshType::VertexType& v22 = m_meshCurrent->getVertex(q2.vertices[1]);
+		const typename MeshType::VertexType& v13 = m_meshCurrent->getVertex(q1.vertices[2]);
+		const typename MeshType::VertexType& v23 = m_meshCurrent->getVertex(q2.vertices[2]);
+		const typename MeshType::VertexType& v14 = m_meshCurrent->getVertex(q1.vertices[3]);
+		const typename MeshType::VertexType& v24 = m_meshCurrent->getVertex(q2.vertices[3]);
+		if (isSameVertex(v11, v21) && isSameVertex(v12, v22) && isSameVertex(v13, v23) && isSameVertex(v14, v24)) {
 			//Now check whether quad 2 is adjacent to quad one by comparing vertices.
 			//Adjacent quads must share two vertices, and the second quad could be to the
 			//top, bottom, left, of right of the first one. This gives four combinations to test.
@@ -167,12 +180,25 @@ namespace PolyVox
 		return bDidMerge;
 	}
 
-	template<typename VolumeType, typename MeshType>
-	int32_t addVertex(uint32_t uX, uint32_t uY, uint32_t uZ, typename VolumeType::VoxelType uMaterialIn, Array<3, IndexAndMaterial<VolumeType> >& existingVertices, MeshType* m_meshCurrent)
+	// https://0fps.net/2013/07/03/ambient-occlusion-for-minecraft-like-worlds/
+	// 0 is the darkest
+	// 3 is no occlusion at all
+	inline uint8_t vertexAmbientOcclusion(bool side1, bool side2, bool corner)
+	{
+		if (side1 && side2) {
+			return 0;
+		}
+		return 3 - (side1 + side2 + corner);
+	}
+
+	template<typename VolumeType, typename MeshType, typename ContributeToAO>
+	int32_t addVertex(uint32_t uX, uint32_t uY, uint32_t uZ, typename VolumeType::VoxelType uMaterialIn, Array<3, IndexAndMaterial<VolumeType> >& existingVertices, MeshType* m_meshCurrent, const typename VolumeType::VoxelType& face1, const typename VolumeType::VoxelType& face2, const typename VolumeType::VoxelType& corner, ContributeToAO contributeToAO)
 	{
 		for (uint32_t ct = 0; ct < MaxVerticesPerPosition; ct++)
 		{
 			IndexAndMaterial<VolumeType>& rEntry = existingVertices(uX, uY, ct);
+
+			const uint8_t ambientOcclusion = vertexAmbientOcclusion(contributeToAO(face1), contributeToAO(face2), contributeToAO(corner));
 
 			if (rEntry.iIndex == -1)
 			{
@@ -180,14 +206,16 @@ namespace PolyVox
 				CubicVertex<typename VolumeType::VoxelType> cubicVertex;
 				cubicVertex.encodedPosition.setElements(static_cast<uint8_t>(uX), static_cast<uint8_t>(uY), static_cast<uint8_t>(uZ));
 				cubicVertex.data = uMaterialIn;
+				cubicVertex.ambientOcclusion = ambientOcclusion;
 				rEntry.iIndex = m_meshCurrent->addVertex(cubicVertex);
 				rEntry.uMaterial = uMaterialIn;
+				rEntry.ambientOcclusion = ambientOcclusion;
 
 				return rEntry.iIndex;
 			}
 
 			//If we have an existing vertex and the material matches then we can return it.
-			if (rEntry.uMaterial == uMaterialIn)
+			if (rEntry.uMaterial == uMaterialIn && rEntry.ambientOcclusion == ambientOcclusion)
 			{
 				return rEntry.iIndex;
 			}
@@ -240,11 +268,11 @@ namespace PolyVox
 	///
 	/// Another scenario which sometimes results in confusion is when you wish to extract a region which corresponds to the whole volume, partcularly when solid voxels extend right to the edge of the volume.  
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	template<typename VolumeType, typename IsQuadNeeded>
-	Mesh<CubicVertex<typename VolumeType::VoxelType> > extractCubicMesh(VolumeType* volData, Region region, IsQuadNeeded isQuadNeeded, bool bMergeQuads)
+	template<typename VolumeType, typename IsQuadNeeded, typename ContributeToAO>
+	Mesh<CubicVertex<typename VolumeType::VoxelType> > extractCubicMesh(VolumeType* volData, Region region, IsQuadNeeded isQuadNeeded, ContributeToAO contributeToAO, bool bMergeQuads)
 	{
 		Mesh< CubicVertex<typename VolumeType::VoxelType> > result;
-		extractCubicMeshCustom(volData, region, &result, isQuadNeeded, bMergeQuads);
+		extractCubicMeshCustom(volData, region, &result, isQuadNeeded, contributeToAO, bMergeQuads);
 		return result;
 	}
 
@@ -261,8 +289,8 @@ namespace PolyVox
 	/// Note: This function is called 'extractCubicMeshCustom' rather than 'extractCubicMesh' to avoid ambiguity when only three parameters
 	/// are provided (would the third parameter be a controller or a mesh?). It seems this can be fixed by using enable_if/static_assert to emulate concepts,
 	/// but this is relatively complex and I haven't done it yet. Could always add it later as another overload.
-	template<typename VolumeType, typename MeshType, typename IsQuadNeeded>
-	void extractCubicMeshCustom(VolumeType* volData, Region region, MeshType* result, IsQuadNeeded isQuadNeeded, bool bMergeQuads)
+	template<typename VolumeType, typename MeshType, typename IsQuadNeeded, typename ContributeToAO>
+	void extractCubicMeshCustom(VolumeType* volData, Region region, MeshType* result, IsQuadNeeded isQuadNeeded, ContributeToAO contributeToAO, bool bMergeQuads)
 	{
 		// This extractor has a limit as to how large the extracted region can be, because the vertex positions are encoded with a single byte per component.
 		int32_t maxReionDimensionInVoxels = 255;
@@ -310,73 +338,170 @@ namespace PolyVox
 				{
 					uint32_t regX = x - region.getLowerX();
 
+					/**
+					 *
+					 *
+					 *                  [D]
+					 *            8 ____________ 7
+					 *             /|          /|
+					 *            / |         / |              ABOVE [D] |
+					 *           /  |    [F] /  |              BELOW [C]
+					 *        5 /___|_______/ 6 |  [B]       y           BEHIND  [F]
+					 *    [A]   |   |_______|___|              |      z  BEFORE [E] /
+					 *          | 4 /       |   / 3            |   /
+					 *          |  / [E]    |  /               |  /   . center
+					 *          | /         | /                | /
+					 *          |/__________|/                 |/________   LEFT  RIGHT
+					 *        1               2                          x   [A] - [B]
+					 *               [C]
+					 */
+
 					typename VolumeType::VoxelType material; //Filled in by callback
-					typename VolumeType::VoxelType currentVoxel = volumeSampler.getVoxel();
-					typename VolumeType::VoxelType negXVoxel = volumeSampler.peekVoxel1nx0py0pz();
-					typename VolumeType::VoxelType negYVoxel = volumeSampler.peekVoxel0px1ny0pz();
-					typename VolumeType::VoxelType negZVoxel = volumeSampler.peekVoxel0px0py1nz();
 
-					// X
-					if (isQuadNeeded(currentVoxel, negXVoxel, material))
+					typename VolumeType::VoxelType voxelCurrent                = volumeSampler.getVoxel();
+
+					const typename VolumeType::VoxelType voxelLeft             = volumeSampler.peekVoxel1nx0py0pz();
+					const typename VolumeType::VoxelType voxelBefore           = volumeSampler.peekVoxel0px0py1nz();
+					const typename VolumeType::VoxelType voxelLeftBefore       = volumeSampler.peekVoxel1nx0py1nz();
+					const typename VolumeType::VoxelType voxelRightBefore      = volumeSampler.peekVoxel1px0py1nz();
+					const typename VolumeType::VoxelType voxelLeftBehind       = volumeSampler.peekVoxel1nx0py1pz();
+
+					const typename VolumeType::VoxelType voxelAboveLeft        = volumeSampler.peekVoxel1nx1py0pz();
+					const typename VolumeType::VoxelType voxelAboveBefore      = volumeSampler.peekVoxel0px1py1nz();
+					const typename VolumeType::VoxelType voxelAboveLeftBefore  = volumeSampler.peekVoxel1nx1py1nz();
+					const typename VolumeType::VoxelType voxelAboveRightBefore = volumeSampler.peekVoxel1px1py1nz();
+					const typename VolumeType::VoxelType voxelAboveLeftBehind  = volumeSampler.peekVoxel1nx1py1pz();
+
+					const typename VolumeType::VoxelType voxelBelow            = volumeSampler.peekVoxel0px1ny0pz();
+					const typename VolumeType::VoxelType voxelBelowLeft        = volumeSampler.peekVoxel1nx1ny0pz();
+					const typename VolumeType::VoxelType voxelBelowRight       = volumeSampler.peekVoxel1px1ny0pz();
+					const typename VolumeType::VoxelType voxelBelowBefore      = volumeSampler.peekVoxel0px1ny1nz();
+					const typename VolumeType::VoxelType voxelBelowBehind      = volumeSampler.peekVoxel0px1ny1pz();
+					const typename VolumeType::VoxelType voxelBelowLeftBefore  = volumeSampler.peekVoxel1nx1ny1nz();
+					const typename VolumeType::VoxelType voxelBelowRightBefore = volumeSampler.peekVoxel1px1ny1nz();
+					const typename VolumeType::VoxelType voxelBelowLeftBehind  = volumeSampler.peekVoxel1nx1ny1pz();
+					const typename VolumeType::VoxelType voxelBelowRightBehind = volumeSampler.peekVoxel1px1ny1pz();
+
+					// X [A] LEFT
+					if (isQuadNeeded(voxelCurrent, voxelLeft, material))
 					{
-						uint32_t v0 = addVertex(regX, regY, regZ, material, m_previousSliceVertices, result);
-						uint32_t v1 = addVertex(regX, regY, regZ + 1, material, m_currentSliceVertices, result);
-						uint32_t v2 = addVertex(regX, regY + 1, regZ + 1, material, m_currentSliceVertices, result);
-						uint32_t v3 = addVertex(regX, regY + 1, regZ, material, m_previousSliceVertices, result);
-
-						m_vecQuads[NegativeX][regX].push_back(Quad(v0, v1, v2, v3));
+						const uint32_t v_0_1 = addVertex(regX, regY,     regZ,     material, m_previousSliceVertices, result,
+							voxelLeftBefore, voxelBelowLeft, voxelBelowLeftBefore, contributeToAO);
+						const uint32_t v_1_4 = addVertex(regX, regY,     regZ + 1, material, m_currentSliceVertices,  result,
+							voxelBelowLeft, voxelLeftBehind, voxelBelowLeftBehind, contributeToAO);
+						const uint32_t v_2_8 = addVertex(regX, regY + 1, regZ + 1, material, m_currentSliceVertices,  result,
+							voxelLeftBehind, voxelAboveLeft, voxelAboveLeftBehind, contributeToAO);
+						const uint32_t v_3_5 = addVertex(regX, regY + 1, regZ,     material, m_previousSliceVertices, result,
+							voxelAboveLeft, voxelLeftBefore, voxelAboveLeftBefore, contributeToAO);
+						m_vecQuads[NegativeX][regX].push_back(Quad(v_0_1, v_1_4, v_2_8, v_3_5));
 					}
 
-					if (isQuadNeeded(negXVoxel, currentVoxel, material))
-					{
-						uint32_t v0 = addVertex(regX, regY, regZ, material, m_previousSliceVertices, result);
-						uint32_t v1 = addVertex(regX, regY, regZ + 1, material, m_currentSliceVertices, result);
-						uint32_t v2 = addVertex(regX, regY + 1, regZ + 1, material, m_currentSliceVertices, result);
-						uint32_t v3 = addVertex(regX, regY + 1, regZ, material, m_previousSliceVertices, result);
+					// X [B] RIGHT
+					if (isQuadNeeded(voxelLeft, voxelCurrent, material)) {
+						volumeSampler.moveNegativeX();
 
-						m_vecQuads[PositiveX][regX].push_back(Quad(v0, v3, v2, v1));
+						const typename VolumeType::VoxelType _voxelRightBefore      = volumeSampler.peekVoxel1px0py1nz();
+						const typename VolumeType::VoxelType _voxelRightBehind      = volumeSampler.peekVoxel1px0py1pz();
+
+						const typename VolumeType::VoxelType _voxelAboveRight       = volumeSampler.peekVoxel1px1py0pz();
+						const typename VolumeType::VoxelType _voxelAboveRightBefore = volumeSampler.peekVoxel1px1py1nz();
+						const typename VolumeType::VoxelType _voxelAboveRightBehind = volumeSampler.peekVoxel1px1py1pz();
+
+						const typename VolumeType::VoxelType _voxelBelowRight       = volumeSampler.peekVoxel1px1ny0pz();
+						const typename VolumeType::VoxelType _voxelBelowRightBefore = volumeSampler.peekVoxel1px1ny1nz();
+						const typename VolumeType::VoxelType _voxelBelowRightBehind = volumeSampler.peekVoxel1px1ny1pz();
+
+						const uint32_t v_0_2 = addVertex(regX, regY,     regZ,     material, m_previousSliceVertices, result,
+								_voxelBelowRight, _voxelRightBefore, _voxelBelowRightBefore, contributeToAO);
+						const uint32_t v_1_3 = addVertex(regX, regY,     regZ + 1, material, m_currentSliceVertices,  result,
+								_voxelBelowRight, _voxelRightBehind, _voxelBelowRightBehind, contributeToAO);
+						const uint32_t v_2_7 = addVertex(regX, regY + 1, regZ + 1, material, m_currentSliceVertices,  result,
+								_voxelAboveRight, _voxelRightBehind, _voxelAboveRightBehind, contributeToAO);
+						const uint32_t v_3_6 = addVertex(regX, regY + 1, regZ,     material, m_previousSliceVertices, result,
+								_voxelAboveRight, _voxelRightBefore, _voxelAboveRightBefore, contributeToAO);
+						m_vecQuads[PositiveX][regX].push_back(Quad(v_0_2, v_3_6, v_2_7, v_1_3));
+
+						volumeSampler.movePositiveX();
 					}
 
-					// Y
-					if (isQuadNeeded(currentVoxel, negYVoxel, material))
-					{
-						uint32_t v0 = addVertex(regX, regY, regZ, material, m_previousSliceVertices, result);
-						uint32_t v1 = addVertex(regX + 1, regY, regZ, material, m_previousSliceVertices, result);
-						uint32_t v2 = addVertex(regX + 1, regY, regZ + 1, material, m_currentSliceVertices, result);
-						uint32_t v3 = addVertex(regX, regY, regZ + 1, material, m_currentSliceVertices, result);
-
-						m_vecQuads[NegativeY][regY].push_back(Quad(v0, v1, v2, v3));
+					// Y [C] BELOW
+					if (isQuadNeeded(voxelCurrent, voxelBelow, material)) {
+						const uint32_t v_0_1 = addVertex(regX,     regY, regZ,     material, m_previousSliceVertices, result,
+								voxelBelowBefore, voxelBelowLeft, voxelBelowLeftBefore, contributeToAO);
+						const uint32_t v_1_2 = addVertex(regX + 1, regY, regZ,     material, m_previousSliceVertices, result,
+								voxelBelowRight, voxelBelowBefore, voxelBelowRightBefore, contributeToAO);
+						const uint32_t v_2_3 = addVertex(regX + 1, regY, regZ + 1, material, m_currentSliceVertices,  result,
+								voxelBelowBehind, voxelBelowRight, voxelBelowRightBehind, contributeToAO);
+						const uint32_t v_3_4 = addVertex(regX,     regY, regZ + 1, material, m_currentSliceVertices,  result,
+								voxelBelowLeft, voxelBelowBehind, voxelBelowLeftBehind, contributeToAO);
+						m_vecQuads[NegativeY][regY].push_back(Quad(v_0_1, v_1_2, v_2_3, v_3_4));
 					}
 
-					if (isQuadNeeded(negYVoxel, currentVoxel, material))
-					{
-						uint32_t v0 = addVertex(regX, regY, regZ, material, m_previousSliceVertices, result);
-						uint32_t v1 = addVertex(regX + 1, regY, regZ, material, m_previousSliceVertices, result);
-						uint32_t v2 = addVertex(regX + 1, regY, regZ + 1, material, m_currentSliceVertices, result);
-						uint32_t v3 = addVertex(regX, regY, regZ + 1, material, m_currentSliceVertices, result);
+					// Y [D] ABOVE
+					if (isQuadNeeded(voxelBelow, voxelCurrent, material)) {
+						volumeSampler.moveNegativeY();
 
-						m_vecQuads[PositiveY][regY].push_back(Quad(v0, v3, v2, v1));
+						const typename VolumeType::VoxelType _voxelAboveLeft        = volumeSampler.peekVoxel1nx1py0pz();
+						const typename VolumeType::VoxelType _voxelAboveRight       = volumeSampler.peekVoxel1px1py0pz();
+						const typename VolumeType::VoxelType _voxelAboveBefore      = volumeSampler.peekVoxel0px1py1nz();
+						const typename VolumeType::VoxelType _voxelAboveBehind      = volumeSampler.peekVoxel0px1py1pz();
+						const typename VolumeType::VoxelType _voxelAboveLeftBefore  = volumeSampler.peekVoxel1nx1py1nz();
+						const typename VolumeType::VoxelType _voxelAboveRightBefore = volumeSampler.peekVoxel1px1py1nz();
+						const typename VolumeType::VoxelType _voxelAboveLeftBehind  = volumeSampler.peekVoxel1nx1py1pz();
+						const typename VolumeType::VoxelType _voxelAboveRightBehind = volumeSampler.peekVoxel1px1py1pz();
+
+						const uint32_t v_0_5 = addVertex(regX,     regY, regZ,     material, m_previousSliceVertices, result,
+								_voxelAboveBefore, _voxelAboveLeft, _voxelAboveLeftBefore, contributeToAO);
+						const uint32_t v_1_6 = addVertex(regX + 1, regY, regZ,     material, m_previousSliceVertices, result,
+								_voxelAboveRight, _voxelAboveBefore, _voxelAboveRightBefore, contributeToAO);
+						const uint32_t v_2_7 = addVertex(regX + 1, regY, regZ + 1, material, m_currentSliceVertices,  result,
+								_voxelAboveBehind, _voxelAboveRight, _voxelAboveRightBehind, contributeToAO);
+						const uint32_t v_3_8 = addVertex(regX,     regY, regZ + 1, material, m_currentSliceVertices,  result,
+								_voxelAboveLeft, _voxelAboveBehind, _voxelAboveLeftBehind, contributeToAO);
+						m_vecQuads[PositiveY][regY].push_back(Quad(v_0_5, v_3_8, v_2_7, v_1_6));
+
+						volumeSampler.movePositiveY();
 					}
 
-					// Z
-					if (isQuadNeeded(currentVoxel, negZVoxel, material))
-					{
-						uint32_t v0 = addVertex(regX, regY, regZ, material, m_previousSliceVertices, result);
-						uint32_t v1 = addVertex(regX, regY + 1, regZ, material, m_previousSliceVertices, result);
-						uint32_t v2 = addVertex(regX + 1, regY + 1, regZ, material, m_previousSliceVertices, result);
-						uint32_t v3 = addVertex(regX + 1, regY, regZ, material, m_previousSliceVertices, result);
-
-						m_vecQuads[NegativeZ][regZ].push_back(Quad(v0, v1, v2, v3));
+					// Z [E] BEFORE
+					if (isQuadNeeded(voxelCurrent, voxelBefore, material)) {
+						const uint32_t v_0_1 = addVertex(regX,     regY,     regZ, material, m_previousSliceVertices, result,
+								voxelBelowBefore, voxelLeftBefore, voxelBelowLeftBefore, contributeToAO);
+						const uint32_t v_1_5 = addVertex(regX,     regY + 1, regZ, material, m_previousSliceVertices, result,
+								voxelAboveBefore, voxelLeftBefore, voxelAboveLeftBefore, contributeToAO);
+						const uint32_t v_2_6 = addVertex(regX + 1, regY + 1, regZ, material, m_previousSliceVertices, result,
+								voxelAboveBefore, voxelRightBefore, voxelAboveRightBefore, contributeToAO);
+						const uint32_t v_3_2 = addVertex(regX + 1, regY,     regZ, material, m_previousSliceVertices, result,
+								voxelBelowBefore, voxelRightBefore, voxelBelowRightBefore, contributeToAO);
+						m_vecQuads[NegativeZ][regZ].push_back(Quad(v_0_1, v_1_5, v_2_6, v_3_2));
 					}
 
-					if (isQuadNeeded(negZVoxel, currentVoxel, material))
-					{
-						uint32_t v0 = addVertex(regX, regY, regZ, material, m_previousSliceVertices, result);
-						uint32_t v1 = addVertex(regX, regY + 1, regZ, material, m_previousSliceVertices, result);
-						uint32_t v2 = addVertex(regX + 1, regY + 1, regZ, material, m_previousSliceVertices, result);
-						uint32_t v3 = addVertex(regX + 1, regY, regZ, material, m_previousSliceVertices, result);
+					// Z [F] BEHIND
+					if (isQuadNeeded(voxelBefore, voxelCurrent, material)) {
+						volumeSampler.moveNegativeZ();
 
-						m_vecQuads[PositiveZ][regZ].push_back(Quad(v0, v3, v2, v1));
+						const typename VolumeType::VoxelType _voxelLeftBehind       = volumeSampler.peekVoxel1nx0py1pz();
+						const typename VolumeType::VoxelType _voxelRightBehind      = volumeSampler.peekVoxel1px0py1pz();
+
+						const typename VolumeType::VoxelType _voxelAboveBehind      = volumeSampler.peekVoxel0px1py1pz();
+						const typename VolumeType::VoxelType _voxelAboveLeftBehind  = volumeSampler.peekVoxel1nx1py1pz();
+						const typename VolumeType::VoxelType _voxelAboveRightBehind = volumeSampler.peekVoxel1px1py1pz();
+
+						const typename VolumeType::VoxelType _voxelBelowBehind      = volumeSampler.peekVoxel0px1ny1pz();
+						const typename VolumeType::VoxelType _voxelBelowLeftBehind  = volumeSampler.peekVoxel1nx1ny1pz();
+						const typename VolumeType::VoxelType _voxelBelowRightBehind = volumeSampler.peekVoxel1px1ny1pz();
+
+						const uint32_t v_0_4 = addVertex(regX,     regY,     regZ, material, m_previousSliceVertices, result,
+								_voxelBelowBehind, _voxelLeftBehind, _voxelBelowLeftBehind, contributeToAO);
+						const uint32_t v_1_8 = addVertex(regX,     regY + 1, regZ, material, m_previousSliceVertices, result,
+								_voxelAboveBehind, _voxelLeftBehind, _voxelAboveLeftBehind, contributeToAO);
+						const uint32_t v_2_7 = addVertex(regX + 1, regY + 1, regZ, material, m_previousSliceVertices, result,
+								_voxelAboveBehind, _voxelRightBehind, _voxelAboveRightBehind, contributeToAO);
+						const uint32_t v_3_3 = addVertex(regX + 1, regY,     regZ, material, m_previousSliceVertices, result,
+								_voxelBelowBehind, _voxelRightBehind, _voxelBelowRightBehind, contributeToAO);
+						m_vecQuads[PositiveZ][regZ].push_back(Quad(v_0_4, v_3_3, v_2_7, v_1_8));
+
+						volumeSampler.movePositiveZ();
 					}
 
 					volumeSampler.movePositiveX();
@@ -405,8 +530,19 @@ namespace PolyVox
 				typename std::list<Quad>::iterator iterEnd = listQuads.end();
 				for (typename std::list<Quad>::iterator quadIter = listQuads.begin(); quadIter != iterEnd; quadIter++)
 				{
-					Quad& quad = *quadIter;
-					result->addTriangle(quad.vertices[0], quad.vertices[1], quad.vertices[2]);
+					const Quad& quad = *quadIter;
+					const CubicVertex<typename VolumeType::VoxelType>& v00 = result->getVertex(quad.vertices[3]);
+					const CubicVertex<typename VolumeType::VoxelType>& v01 = result->getVertex(quad.vertices[0]);
+					const CubicVertex<typename VolumeType::VoxelType>& v10 = result->getVertex(quad.vertices[2]);
+					const CubicVertex<typename VolumeType::VoxelType>& v11 = result->getVertex(quad.vertices[1]);
+
+					if (v00.ambientOcclusion + v11.ambientOcclusion > v01.ambientOcclusion + v10.ambientOcclusion) {
+						result->addTriangle(quad.vertices[1], quad.vertices[2], quad.vertices[3]);
+						result->addTriangle(quad.vertices[1], quad.vertices[3], quad.vertices[0]);
+					} else {
+						result->addTriangle(quad.vertices[0], quad.vertices[1], quad.vertices[2]);
+						result->addTriangle(quad.vertices[0], quad.vertices[2], quad.vertices[3]);
+					}
 					result->addTriangle(quad.vertices[0], quad.vertices[2], quad.vertices[3]);
 				}
 			}

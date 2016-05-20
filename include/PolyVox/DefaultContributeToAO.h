@@ -22,33 +22,24 @@
 * SOFTWARE.
 *******************************************************************************/
 
-#ifndef __PolyVox_Vertex_H__
-#define __PolyVox_Vertex_H__
+#ifndef __PolyVox_DefaultContributeToAO_H__
+#define __PolyVox_DefaultContributeToAO_H__
 
 #include "Impl/PlatformDefinitions.h"
 
-#include "Vector.h"
-
-#include <bitset>
-#include <vector>
+#include <cstdint>
 
 namespace PolyVox
 {
-	/**
-	 * Represents a vertex in a mesh and includes position and normal information.
-	 * There is also a 'data' member, which usually stores the (possibly interpolated)
-	 * value of the voxel(s) which caused the vertex to be generated.
-	 */
-	template<typename _DataType>
-	struct  Vertex
+	template<typename VoxelType>
+	class DefaultContributeToAO
 	{
-		typedef _DataType DataType;
-
-		Vector3DFloat position;
-		Vector3DFloat normal;
-		uint8_t ambientOcclusion;
-		DataType data;
+	public:
+		bool operator()(VoxelType voxeltype) const
+		{
+			return voxeltype != 0;
+		}
 	};
 }
 
-#endif // __PolyVox_Vertex_H__
+#endif //__PolyVox_DefaultContributeToAO_H__

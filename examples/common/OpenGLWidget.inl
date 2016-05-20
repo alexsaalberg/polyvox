@@ -2,6 +2,7 @@
 
 #include <QMouseEvent>
 #include <QTimer>
+#include <cmath>
 
 #include <iostream>
 
