@@ -38,6 +38,7 @@ SET(CORE_INC_FILES
 	PolyVox/BaseVolumeSampler.inl
 	PolyVox/CubicSurfaceExtractor.h
 	PolyVox/CubicSurfaceExtractor.inl
+	PolyVox/DefaultContributeToAO.h
 	PolyVox/DefaultIsQuadNeeded.h
 	PolyVox/DefaultMarchingCubesController.h
 	PolyVox/Density.h
